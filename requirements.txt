@@ -3,4 +3,4 @@ streamlit
 plotly
 openpyxl
 xlsxwriter
-fpdf
+fpdf2
