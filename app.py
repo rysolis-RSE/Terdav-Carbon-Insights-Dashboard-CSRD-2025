@@ -215,6 +215,55 @@ with tab2:
         st.info("Données d'évolution non disponibles.")
 
 with tab3:
+    st.subheader("🎯 Analyse de Concentration (Pareto)")
+    st.caption("Identifier les destinations prioritaires : La règle des 80/20.")
+    
+    # 1. Préparation des données pour Pareto
+    df_pareto = df_dest.groupby('Pays')[['CO2_Total_Simule']].sum().sort_values('CO2_Total_Simule', ascending=False)
+    df_pareto['Cummulative_Percentage'] = (df_pareto['CO2_Total_Simule'].cumsum() / df_pareto['CO2_Total_Simule'].sum()) * 100
+    
+    # 2. Création du Graphique Combiné
+    fig_pareto = go.Figure()
+    
+    # Barres (Volume CO2)
+    fig_pareto.add_trace(go.Bar(
+        x=df_pareto.index, 
+        y=df_pareto['CO2_Total_Simule'],
+        name='Emissions (kgCO2e)',
+        marker_color='#E63946'
+    ))
+    
+    # Ligne (Pourcentage Cumulé)
+    fig_pareto.add_trace(go.Scatter(
+        x=df_pareto.index,
+        y=df_pareto['Cummulative_Percentage'],
+        name='% Cumulé',
+        yaxis='y2',
+        mode='lines+markers',
+        line=dict(color='#2A9D8F', width=3)
+    ))
+    
+    # Mise en page double axe
+    fig_pareto.update_layout(
+        title="Quelles destinations pèsent le plus ?",
+        yaxis=dict(title="Volume Emissions CO2"),
+        yaxis2=dict(title="% Cumulé du Total", overlaying='y', side='right', range=[0, 110]),
+        showlegend=True,
+        legend=dict(x=0.6, y=0.9)
+    )
+    
+    # Ligne des 80% (Seuil critique)
+    fig_pareto.add_shape(type="line",
+        x0=-0.5, y0=80, x1=len(df_pareto)-0.5, y1=80,
+        yref="y2",
+        line=dict(color="Gray", width=2, dash="dash"),
+    )
+    fig_pareto.add_annotation(x=len(df_pareto)/2, y=80, yref="y2", text="Seuil 80% des émissions", showarrow=False, yshift=10)
+
+    st.plotly_chart(fig_pareto, use_container_width=True)
+    
+    # Le tableau reste en dessous
+    st.markdown("### Détails Chiffrés")
     st.dataframe(df_dest[['Pays', 'Nb_Pax_Total', 'CO2_Total_Simule']].sort_values('CO2_Total_Simule', ascending=False))
 
 # Export PDF
