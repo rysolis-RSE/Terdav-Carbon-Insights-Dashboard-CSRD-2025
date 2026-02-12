@@ -9,41 +9,29 @@ import io
 st.set_page_config(page_title="Strategic Carbon Monitor", layout="wide", page_icon="🌍")
 
 # ==============================================================================
-# 1. DONNÉES FICTIVES (POUR LA DÉMO UNIQUEMENT)
+# 1. DONNÉES FICTIVES (Mode Démo par défaut)
 # ==============================================================================
 
-# Entreprise fictive "TravelCorp" - Evolution inventée
+# Historique inventé (Pour montrer la courbe)
 DEMO_HISTORY = pd.DataFrame({
     'Annee': [2023, 2024, 2025],
-    'Total_CO2': [50000000, 51500000, 49000000], # Chiffres ronds fictifs
+    'Total_CO2': [50000000, 51500000, 49000000], # ~50k tonnes
     'Nb_Pax': [30000, 31000, 30500]
 })
 
-# Destinations fictives (Répartition au hasard)
+# Destinations inventées (Pour montrer la carte)
 DEMO_DESTINATIONS = pd.DataFrame({
     'Pays': [
         'Australie', 'Mexique', 'Thailande', 'Japon', 'Etats-Unis', 
         'Perou', 'Indonesie', 'Afrique du Sud', 'Vietnam', 'Costa Rica',
         'France', 'Italie', 'Espagne', 'Grece', 'Portugal'
     ],
-    'Nb_Pax_Total': [
-        500, 800, 1200, 600, 400, 
-        700, 900, 300, 1000, 450, 
-        5000, 3000, 2500, 1500, 1200
-    ],
-    # CO2 inventé : Loin = Beaucoup, Près = Peu
-    'CO2_Total': [
-        4500000, 3200000, 3000000, 2800000, 2500000, 
-        2400000, 2200000, 1800000, 1700000, 1500000, 
-        500000, 800000, 700000, 900000, 600000
-    ]
+    'Nb_Pax_Total': [500, 800, 1200, 600, 400, 700, 900, 300, 1000, 450, 5000, 3000, 2500, 1500, 1200],
+    'CO2_Aerien': [4000000, 2800000, 2500000, 2400000, 2000000, 2000000, 1800000, 1500000, 1400000, 1200000, 50000, 100000, 100000, 200000, 200000],
+    'CO2_Terrestre': [500000, 400000, 500000, 400000, 500000, 400000, 400000, 300000, 300000, 300000, 450000, 700000, 600000, 700000, 400000]
 })
-# On sépare arbitrairement Aérien/Terrestre pour la démo
-DEMO_DESTINATIONS['CO2_Aerien'] = DEMO_DESTINATIONS['CO2_Total'] * 0.85
-DEMO_DESTINATIONS['CO2_Terrestre'] = DEMO_DESTINATIONS['CO2_Total'] * 0.15
 
-
-# Base GPS (Publique)
+# Base GPS (Annuaire public)
 COORDINATES_DB = {
     "France": [46.6, 1.8], "Italie": [41.8, 12.5], "Espagne": [40.4, -3.7], 
     "Portugal": [39.3, -8.2], "Grece": [39.0, 21.8], "Maroc": [31.7, -7.0],
@@ -70,7 +58,7 @@ def generate_pdf(kpi, simulation_text=""):
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", "B", 16)
-        pdf.cell(190, 10, "Rapport Strategique Carbone (DEMO)", ln=True, align="C")
+        pdf.cell(190, 10, "Rapport Strategique Carbone (CSRD)", ln=True, align="C")
         pdf.ln(10)
         pdf.set_font("Arial", "", 12)
         pdf.cell(190, 8, f"Emissions Totales 2025 : {kpi['Total_CO2']/1000:,.1f} tCO2e", ln=True)
@@ -83,62 +71,86 @@ def generate_pdf(kpi, simulation_text=""):
         return None
 
 # ==============================================================================
-# 3. INTERFACE
+# 3. INTERFACE & LOGIQUE DE CHARGEMENT
 # ==============================================================================
 st.sidebar.title("🎛️ Paramètres Stratégiques")
 prix_tonne = st.sidebar.slider("Prix Tonne CO2 (€)", 0, 200, 80, 10)
 reduction_objectif = st.sidebar.slider("Réduction Aérien (%)", 0, 50, 0, 5)
 
 st.sidebar.markdown("---")
-st.sidebar.warning("⚠️ **MODE DÉMO ACTIF**")
-st.sidebar.caption("Données fictives générées pour la présentation.")
-# Le bouton upload reste là si tu veux mettre tes vraies données en privé plus tard
-uploaded_file = st.sidebar.file_uploader("Importer des données réelles (Optionnel)", type=["xlsx"])
+st.sidebar.markdown("### 📂 Source des Données")
+uploaded_file = st.sidebar.file_uploader("Importer votre Excel Réel", type=["xlsx"])
 
-# CHOIX DES DONNÉES
-df_evol = DEMO_HISTORY.copy()
-df_dest = DEMO_DESTINATIONS.copy()
-
+# --- BASULE INTELLIGENTE (SWITCH) ---
 if uploaded_file:
+    # CAS 1 : UTILISATEUR A UPLOADÉ UN FICHIER -> ON UTILISE SES DONNÉES
+    st.sidebar.success("✅ Données RÉELLES chargées")
     try:
         xls = pd.ExcelFile(uploaded_file)
+        
+        # Lecture Destinations
         if 'Destinations' in xls.sheet_names:
             df_dest = pd.read_excel(xls, 'Destinations')
+        else:
+            df_dest = pd.read_excel(xls) # Tentative sur le 1er onglet
+            
+        # Lecture Evolution (Si elle existe)
         if 'Evolution' in xls.sheet_names:
             df_evol = pd.read_excel(xls, 'Evolution')
-        st.sidebar.success("✅ Données réelles chargées !")
-    except:
-        st.sidebar.error("Erreur de lecture fichier")
+        else:
+            # Si pas d'onglet Evolution, on crée un dataframe vide pour ne pas planter
+            df_evol = pd.DataFrame(columns=['Annee', 'Total_CO2'])
+            st.sidebar.warning("⚠️ Onglet 'Evolution' manquant pour la trajectoire.")
+            
+    except Exception as e:
+        st.error(f"Erreur de lecture du fichier : {e}")
+        st.stop()
+else:
+    # CAS 2 : RIEN UPLOADÉ -> ON UTILISE LA DÉMO (TravelCorp)
+    st.sidebar.warning("⚠️ MODE DÉMO ACTIF (Données Fictives)")
+    df_dest = DEMO_DESTINATIONS.copy()
+    df_evol = DEMO_HISTORY.copy()
 
-# 4. PREPARATION
-# Ajout GPS
-df_dest['coords'] = df_dest['Pays'].apply(lambda x: COORDINATES_DB.get(str(x).strip(), [None, None]))
+
+# ==============================================================================
+# 4. TRAITEMENT & CALCULS (S'applique aux deux cas)
+# ==============================================================================
+
+# Nettoyage & GPS
+df_dest['Pays'] = df_dest['Pays'].astype(str).str.strip()
+df_dest['coords'] = df_dest['Pays'].apply(lambda x: COORDINATES_DB.get(x, [None, None]))
 df_dest[['lat', 'lon']] = pd.DataFrame(df_dest['coords'].tolist(), index=df_dest.index)
 
-# Simulation sur Destinations
+if 'CO2_Total' not in df_dest.columns:
+    df_dest['CO2_Total'] = df_dest['CO2_Aerien'] + df_dest['CO2_Terrestre']
+
+# Simulation (Impact du curseur Réduction)
 df_dest['CO2_Aerien_Simule'] = df_dest['CO2_Aerien'] * (1 - reduction_objectif/100)
 df_dest['CO2_Total_Simule'] = df_dest['CO2_Aerien_Simule'] + df_dest['CO2_Terrestre']
 
-# Chiffres Clés (Basés sur le total 2025 fictif)
-total_2025_reel = df_evol[df_evol['Annee'] == 2025]['Total_CO2'].values[0]
-total_simule = total_2025_reel * (1 - (reduction_objectif/100 * 0.75)) # Estimation impact
+# Calcul des Totaux
+total_simule = df_dest['CO2_Total_Simule'].sum()
 cout_carbone = (total_simule / 1000) * prix_tonne
 
 # ==============================================================================
 # 5. DASHBOARD
 # ==============================================================================
-st.title("🌍 Pilotage Stratégique & Financier (DÉMO)")
+st.title("🌍 Pilotage Stratégique & Financier (CSRD)")
 
 # KPIs
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Total CO2 2025", f"{total_2025_reel/1000:,.0f} tCO2e")
+c1.metric("Total CO2 (Simulé)", f"{total_simule/1000:,.0f} tCO2e")
 c2.metric("Risque Financier", f"{cout_carbone:,.0f} €", delta=f"{prix_tonne}€/t", delta_color="inverse")
 c3.metric("Obj. Réduction CSRD", "-1.5% / an")
-# Evolution Réelle 24-25
-val_24 = df_evol[df_evol['Annee']==2024]['Total_CO2'].values[0]
-val_25 = df_evol[df_evol['Annee']==2025]['Total_CO2'].values[0]
-evo = ((val_25 - val_24) / val_24) * 100
-c4.metric("Evolution 24-25", f"{evo:+.1f}%", delta_color="inverse")
+
+# Calcul évolution (si données dispo)
+if not df_evol.empty and len(df_evol) >= 2:
+    val_actuelle = df_evol.iloc[-1]['Total_CO2']
+    val_precedente = df_evol.iloc[-2]['Total_CO2']
+    evo = ((val_actuelle - val_precedente) / val_precedente) * 100
+    c4.metric("Evolution vs N-1", f"{evo:+.1f}%", delta_color="inverse")
+else:
+    c4.metric("Pays Analysés", f"{len(df_dest)}")
 
 st.markdown("---")
 
@@ -147,43 +159,49 @@ tab1, tab2, tab3 = st.tabs(["📉 Trajectoire & Objectifs", "🗺️ Carte Hotsp
 with tab1:
     st.subheader("Performance vs Objectif CSRD (-1.5%)")
     
-    # Construction de la courbe cible (-1.5% par an depuis 2023)
-    ref_2023 = df_evol[df_evol['Annee']==2023]['Total_CO2'].values[0]
-    annees_proj = [2023, 2024, 2025, 2026, 2027]
-    target_values = [ref_2023 * ((1 - 0.015) ** (yr - 2023)) for yr in annees_proj]
-    
-    fig_traj = go.Figure()
-    
-    # 1. Courbe Réelle
-    fig_traj.add_trace(go.Scatter(
-        x=df_evol['Annee'], y=df_evol['Total_CO2'],
-        mode='lines+markers', name='Emissions (Données Démo)',
-        line=dict(color='#E63946', width=4), marker=dict(size=12)
-    ))
-    
-    # 2. Courbe Cible CSRD
-    fig_traj.add_trace(go.Scatter(
-        x=annees_proj, y=target_values,
-        mode='lines', name='Cible CSRD (-1.5%/an)',
-        line=dict(color='purple', dash='dot', width=2)
-    ))
-
-    # 3. Point Simulé
-    if reduction_objectif > 0:
+    if not df_evol.empty:
+        # Construction de la courbe cible
+        start_year = int(df_evol['Annee'].min())
+        ref_value = df_evol[df_evol['Annee'] == start_year]['Total_CO2'].values[0]
+        annees_proj = [start_year + i for i in range(5)] # Projection sur 5 ans
+        target_values = [ref_value * ((1 - 0.015) ** (yr - start_year)) for yr in annees_proj]
+        
+        fig_traj = go.Figure()
+        
+        # Courbe Historique (Bleu/Rouge)
         fig_traj.add_trace(go.Scatter(
-            x=[2025], y=[total_simule],
-            mode='markers', name=f'Simulation (-{reduction_objectif}%)',
-            marker=dict(color='#2A9D8F', size=15, symbol='star')
+            x=df_evol['Annee'], y=df_evol['Total_CO2'],
+            mode='lines+markers', name='Historique Réel',
+            line=dict(color='#E63946', width=4), marker=dict(size=12)
+        ))
+        
+        # Courbe Cible (Violet)
+        fig_traj.add_trace(go.Scatter(
+            x=annees_proj, y=target_values,
+            mode='lines', name='Cible CSRD (-1.5%)',
+            line=dict(color='purple', dash='dot', width=2)
         ))
 
-    fig_traj.update_layout(title="Trajectoire vs Cible -1.5%", yaxis_title="kg CO2e")
-    st.plotly_chart(fig_traj, use_container_width=True)
+        # Point Simulé (Vert) - Seulement si réduction active
+        if reduction_objectif > 0:
+            current_year = int(df_evol['Annee'].max())
+            fig_traj.add_trace(go.Scatter(
+                x=[current_year], y=[total_simule],
+                mode='markers', name=f'Simulation (-{reduction_objectif}%)',
+                marker=dict(color='#2A9D8F', size=15, symbol='star')
+            ))
+
+        fig_traj.update_layout(title="Trajectoire CO2", yaxis_title="kg CO2e")
+        st.plotly_chart(fig_traj, use_container_width=True)
+    else:
+        st.info("Graphique indisponible (Onglet 'Evolution' manquant).")
 
 with tab2:
-    st.subheader("Cartographie (Données Fictives)")
-    
-    df_map = df_dest.dropna(subset=['lat', 'lon'])
-    
+    st.subheader("Cartographie des Risques")
+    df_map = df_dest.dropna(subset=['lat', 'lon']).groupby('Pays').agg({
+        'lat': 'first', 'lon': 'first', 'CO2_Total_Simule': 'sum'
+    }).reset_index()
+
     if not df_map.empty:
         fig_map = px.scatter_geo(
             df_map, 
@@ -197,16 +215,16 @@ with tab2:
             opacity=0.9,
             title="Intensité Carbone par Destination"
         )
-        fig_map.update_layout(margin={"r":0,"t":30,"l":0,"b":0})
+        fig_map.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
         st.plotly_chart(fig_map, use_container_width=True)
     else:
-        st.warning("Erreur carte")
+        st.warning("Aucun pays reconnu pour la carte.")
 
 with tab3:
     st.dataframe(df_dest[['Pays', 'Nb_Pax_Total', 'CO2_Total_Simule']].sort_values('CO2_Total_Simule', ascending=False))
 
 # Export PDF
-if st.button("📄 Télécharger Rapport (Démo)"):
-    pdf_bytes = generate_pdf({'Total_CO2': total_simule, 'Cout_Carbone': cout_carbone}, "CECI EST UN RAPPORT DE DEMONSTRATION")
+if st.button("📄 Télécharger Rapport"):
+    pdf_bytes = generate_pdf({'Total_CO2': total_simule, 'Cout_Carbone': cout_carbone})
     if pdf_bytes:
-        st.download_button("📥 Rapport PDF", pdf_bytes, "Rapport_Demo.pdf")
+        st.download_button("📥 Rapport PDF", pdf_bytes, "Rapport_Carbone.pdf")
