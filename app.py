@@ -7,9 +7,7 @@ import io
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Carbon Monitor", layout="wide", page_icon="🌍")
 
-# --- 0. BASE DE DONNÉES GPS INTÉGRÉE (Plus besoin de les mettre dans Excel) ---
-# J'ai mis les 50 destinations les plus fréquentes. 
-# Si un pays manque, le point ne s'affichera juste pas, mais ça ne plantera pas.
+# --- 0. BASE DE DONNÉES GPS (Pays -> Lat, Lon) ---
 COORDINATES_DB = {
     "France": [46.6, 1.8], "Italie": [41.8, 12.5], "Espagne": [40.4, -3.7], 
     "Portugal": [39.3, -8.2], "Grece": [39.0, 21.8], "Maroc": [31.7, -7.0],
@@ -27,19 +25,7 @@ COORDINATES_DB = {
     "Jordanie": [30.5, 36.2], "Oman": [21.4, 57.0], "Ouzbekistan": [41.3, 64.5]
 }
 
-# --- 1. DONNÉES DE DÉMO ---
-def load_demo_data():
-    data = {
-        'Pays': ['France', 'Italie', 'Nepal', 'Maroc', 'Islande', 'Japon', 'Perou', 'Tanzanie', 'Norvege', 'Grece'],
-        'Nb_Pax_Total': [5000, 3200, 800, 2100, 900, 450, 300, 250, 600, 1500],
-        'CO2_Aerien': [20000, 150000, 1200000, 500000, 450000, 900000, 750000, 600000, 180000, 400000],
-        'CO2_Terrestre': [150000, 120000, 40000, 80000, 30000, 20000, 15000, 12000, 25000, 50000]
-    }
-    df = pd.DataFrame(data)
-    df['CO2_Total'] = df['CO2_Aerien'] + df['CO2_Terrestre']
-    return df
-
-# --- 2. FONCTION PDF ---
+# --- 1. FONCTION PDF ---
 def generate_pdf(kpi, simulation_text=""):
     try:
         pdf = FPDF()
@@ -57,21 +43,29 @@ def generate_pdf(kpi, simulation_text=""):
     except:
         return None
 
-# --- 3. INTERFACE ---
+# --- 2. INTERFACE ---
 st.sidebar.title("🎛️ Simulateur")
 reduction_objectif = st.sidebar.slider("Réduction Aérien (%)", 0, 50, 0, 5)
 
 st.sidebar.markdown("---")
 uploaded_file = st.sidebar.file_uploader("Importer Excel", type=["xlsx"])
 
-# Template simplifié (plus besoin de lat/lon)
+# Template simplifié
 buffer = io.BytesIO()
 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-    pd.DataFrame(columns=['Pays', 'Continent', 'Nb_Pax_Total', 'CO2_Aerien', 'CO2_Terrestre']).to_excel(writer, sheet_name='Destinations', index=False)
+    pd.DataFrame(columns=['Pays', 'Nb_Pax_Total', 'CO2_Aerien', 'CO2_Terrestre']).to_excel(writer, sheet_name='Destinations', index=False)
 st.sidebar.download_button("📥 Template Simplifié", buffer.getvalue(), "Template_Simple.xlsx")
 
-# --- 4. TRAITEMENT INTELLIGENT ---
+# --- 3. TRAITEMENT INTELLIGENT ---
 df = None
+
+# Données de démo au cas où
+demo_data = {
+    'Pays': ['France', 'Italie', 'Nepal', 'Maroc', 'Islande'],
+    'Nb_Pax_Total': [5000, 3200, 800, 2100, 900],
+    'CO2_Aerien': [20000, 150000, 1200000, 500000, 450000],
+    'CO2_Terrestre': [150000, 120000, 40000, 80000, 30000]
+}
 
 if uploaded_file:
     try:
@@ -80,38 +74,35 @@ if uploaded_file:
             df = pd.read_excel(xls, 'Destinations')
         else:
             df = pd.read_excel(xls)
-        
-        # AJOUT AUTOMATIQUE DES COORDONNÉES
-        # On regarde le nom du pays et on ajoute lat/lon depuis le code
-        def get_coords(pays_name):
-            return COORDINATES_DB.get(str(pays_name).strip(), [None, None])
-            
-        # On applique la fonction
-        df['coords'] = df['Pays'].apply(get_coords)
-        df[['lat', 'lon']] = pd.DataFrame(df['coords'].tolist(), index=df.index)
-        
-        # Calcul du total si manquant
-        if 'CO2_Total' not in df.columns:
-            df['CO2_Total'] = df['CO2_Aerien'] + df['CO2_Terrestre']
-            
     except Exception as e:
-        st.error(f"Erreur : {e}")
+        st.error(f"Erreur de lecture : {e}")
         st.stop()
 else:
-    df = load_demo_data()
-    # Ajout coords pour la démo aussi
-    df['coords'] = df['Pays'].apply(lambda x: COORDINATES_DB.get(x, [0,0]))
-    df[['lat', 'lon']] = pd.DataFrame(df['coords'].tolist(), index=df.index)
+    df = pd.DataFrame(demo_data)
 
-# --- 5. SIMULATION & KPI ---
+# --- 4. ENRICHISSEMENT DES DONNÉES (GPS) ---
 if df is not None:
+    # On ajoute Lat/Lon automatiquement
+    def get_coords(pays_name):
+        return COORDINATES_DB.get(str(pays_name).strip(), [None, None])
+        
+    df['coords'] = df['Pays'].apply(get_coords)
+    df[['lat', 'lon']] = pd.DataFrame(df['coords'].tolist(), index=df.index)
+    
+    # Calcul Total
+    if 'CO2_Total' not in df.columns:
+        df['CO2_Total'] = df['CO2_Aerien'] + df['CO2_Terrestre']
+
+    # SIMULATION
     df['CO2_Aerien_Simule'] = df['CO2_Aerien'] * (1 - reduction_objectif/100)
     df['CO2_Total_Simule'] = df['CO2_Aerien_Simule'] + df['CO2_Terrestre']
 
+    # KPIs
     total_co2 = df['CO2_Total_Simule'].sum()
     nb_pax = df['Nb_Pax_Total'].sum()
     intensite = total_co2 / nb_pax if nb_pax > 0 else 0
     
+    # --- DASHBOARD ---
     st.title(f"🌍 Pilotage Stratégique Carbone")
     
     c1, c2, c3 = st.columns(3)
@@ -124,27 +115,39 @@ if df is not None:
     tab1, tab2 = st.tabs(["🗺️ Cartographie", "📊 Analyse"])
     
     with tab1:
-        # OPTIMISATION ANTI-LAG : On regroupe par Pays avant d'afficher
-        # On s'assure d'avoir des coordonnées valides (pas None)
-        df_map = df.dropna(subset=['lat', 'lon']).groupby('Pays').agg({
+        # --- C'EST ICI QUE J'AI CORRIGÉ L'ERREUR ---
+        # On ne regroupe que sur les colonnes qui existent vraiment
+        agg_dict = {
             'lat': 'first', 
             'lon': 'first', 
-            'CO2_Total_Simule': 'sum',
-            'Continent': 'first' # Si colonne existe
-        }).reset_index()
-        
-        fig_map = px.scatter_geo(
-            df_map, 
-            lat="lat", lon="lon", 
-            size="CO2_Total_Simule", 
-            hover_name="Pays",
-            title=f"Carte des émissions (Agrégée par pays)",
-            projection="natural earth",
-            size_max=40 # Taille des bulles
-        )
-        fig_map.update_layout(margin={"r":0,"t":30,"l":0,"b":0})
-        st.plotly_chart(fig_map, use_container_width=True)
-        
+            'CO2_Total_Simule': 'sum'
+        }
+        # Si la colonne Continent existe, on l'ajoute, sinon on l'ignore
+        if 'Continent' in df.columns:
+            agg_dict['Continent'] = 'first'
+
+        # On nettoie les lignes sans coordonnées pour ne pas planter
+        df_clean = df.dropna(subset=['lat', 'lon'])
+
+        if not df_clean.empty:
+            df_map = df_clean.groupby('Pays').agg(agg_dict).reset_index()
+            
+            fig_map = px.scatter_geo(
+                df_map, 
+                lat="lat", lon="lon", 
+                size="CO2_Total_Simule", 
+                hover_name="Pays",
+                color="Continent" if 'Continent' in df_map.columns else "Pays", # Couleur dynamique
+                title=f"Carte des émissions (Agrégée)",
+                projection="natural earth",
+                size_max=40
+            )
+            fig_map.update_layout(margin={"r":0,"t":30,"l":0,"b":0})
+            st.plotly_chart(fig_map, use_container_width=True)
+        else:
+            st.warning("Impossible d'afficher la carte : aucun pays reconnu dans la base GPS.")
+            st.info("Vérifiez l'orthographe des pays (ex: 'France', 'Italie', 'Maroc').")
+
     with tab2:
         top10 = df.sort_values("CO2_Total", ascending=False).head(10)
         import plotly.graph_objects as go
