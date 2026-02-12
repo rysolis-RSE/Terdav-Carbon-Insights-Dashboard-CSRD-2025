@@ -8,7 +8,7 @@ import io
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Strategic Carbon Monitor", layout="wide", page_icon="🌍")
 
-# --- 0. BASE DE DONNÉES GPS (Liste Officielle) ---
+# --- 0. BASE DE DONNÉES GPS (Mise à jour avec CAP VERT) ---
 COORDINATES_DB = {
     "France": [46.6, 1.8], "Italie": [41.8, 12.5], "Espagne": [40.4, -3.7], 
     "Portugal": [39.3, -8.2], "Grece": [39.0, 21.8], "Maroc": [31.7, -7.0],
@@ -23,7 +23,8 @@ COORDINATES_DB = {
     "Japon": [36.2, 138.2], "Vietnam": [14.0, 108.2], "Thailande": [15.8, 100.9],
     "Inde": [20.5, 78.9], "Nepal": [28.3, 84.1], "Chine": [35.8, 104.1],
     "Indonesie": [-0.7, 113.9], "Australie": [-25.2, 133.7], "Nouvelle-Zelande": [-40.9, 174.8],
-    "Jordanie": [30.5, 36.2], "Oman": [21.4, 57.0], "Ouzbekistan": [41.3, 64.5]
+    "Jordanie": [30.5, 36.2], "Oman": [21.4, 57.0], "Ouzbekistan": [41.3, 64.5],
+    "Cap Vert": [16.0, -24.0], "Guadeloupe": [16.2, -61.5], "Martinique": [14.6, -61.0]
 }
 
 # --- 1. FONCTION PDF ---
@@ -46,42 +47,19 @@ def generate_pdf(kpi, simulation_text=""):
 
 # --- 2. INTERFACE ---
 st.sidebar.title("🎛️ Paramètres Stratégiques")
-
 st.sidebar.subheader("💰 Finance & Climat")
 prix_tonne = st.sidebar.slider("Prix Tonne CO2 (€)", 0, 200, 80, 10)
 reduction_objectif = st.sidebar.slider("Réduction Aérien (%)", 0, 50, 0, 5)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 1. Télécharger le Modèle")
-
-# --- GÉNÉRATION DU TEMPLATE PRÉ-REMPLI ---
-# On crée un Excel qui contient DÉJÀ tous les pays valides
-df_template_full = pd.DataFrame({
-    'Pays': list(COORDINATES_DB.keys()), # Liste des pays corrects
-    'Nb_Pax_Total': [0] * len(COORDINATES_DB), # Valeur par défaut
-    'CO2_Aerien': [0] * len(COORDINATES_DB),
-    'CO2_Terrestre': [0] * len(COORDINATES_DB)
-})
-
-buffer = io.BytesIO()
-with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-    df_template_full.to_excel(writer, sheet_name='Destinations', index=False)
-    
-st.sidebar.download_button(
-    label="📥 Télécharger Excel PRÉ-REMPLI",
-    data=buffer.getvalue(),
-    file_name="Template_Terdav_Complet.xlsx",
-    help="Contient déjà la liste des pays reconnus par la carte."
-)
-
-st.sidebar.markdown("### 2. Importer")
+st.sidebar.markdown("### Import Données")
 uploaded_file = st.sidebar.file_uploader("Importer votre Excel", type=["xlsx"])
 
 # --- 3. CHARGEMENT ---
 df = None
 # Données de secours (Demo)
 demo_data = {
-    'Pays': ['France', 'Italie', 'Nepal', 'Maroc', 'Islande', 'Japon'],
+    'Pays': ['France', 'Italie', 'Vietnam', 'Maroc', 'Islande', 'Japon'],
     'Nb_Pax_Total': [5000, 3200, 800, 2100, 900, 450],
     'CO2_Aerien': [20000, 150000, 1200000, 500000, 450000, 900000],
     'CO2_Terrestre': [150000, 120000, 40000, 80000, 30000, 20000]
@@ -95,7 +73,7 @@ if uploaded_file:
         else:
             df = pd.read_excel(xls)
         
-        # Filtrer les lignes vides (si l'utilisateur a laissé des 0)
+        # Filtrer les lignes vides
         df = df[df['Nb_Pax_Total'] > 0].copy()
         
     except Exception as e:
@@ -104,9 +82,9 @@ if uploaded_file:
 else:
     df = pd.DataFrame(demo_data)
 
-# --- 4. ANALYSE ---
+# --- 4. TRAITEMENT ---
 if df is not None:
-    # Nettoyage des noms de pays (enlève les espaces invisibles)
+    # Nettoyage des noms de pays
     df['Pays'] = df['Pays'].astype(str).str.strip()
 
     # Ajout GPS
@@ -138,10 +116,10 @@ if df is not None:
 
     st.markdown("---")
 
-    tab1, tab2, tab3 = st.tabs(["🗺️ Cartographie (Rouge)", "📉 Trajectoire SBTi", "📊 Détails"])
+    tab1, tab2, tab3 = st.tabs(["🗺️ Cartographie (Heatmap)", "📉 Trajectoire SBTi", "📊 Détails"])
 
     with tab1:
-        st.subheader("Cartographie des Hotspots")
+        st.subheader("Cartographie des Hotspots (Classement)")
         
         # Préparation Carte
         df_map = df.dropna(subset=['lat', 'lon']).groupby('Pays').agg({
@@ -149,27 +127,28 @@ if df is not None:
         }).reset_index()
 
         if not df_map.empty:
+            # ICI LE CHANGEMENT MAJEUR POUR LA COULEUR
             fig_map = px.scatter_geo(
                 df_map, 
                 lat="lat", lon="lon", 
-                size="CO2_Total_Simule", 
+                size="CO2_Total_Simule", # La taille dépend du CO2
+                color="CO2_Total_Simule", # La COULEUR aussi (c'est ça qui fait le dégradé)
                 hover_name="Pays",
-                title="Alerte : Zones à Fortes Émissions",
+                title="Intensité des émissions par Pays",
                 projection="natural earth",
-                size_max=50,
-                color_discrete_sequence=['#FF0000'], # FORCE LE ROUGE
-                opacity=0.8
+                size_max=60,
+                color_continuous_scale="Reds", # Dégradé du rose au rouge sang
+                opacity=0.9
             )
-            fig_map.update_traces(marker=dict(line=dict(width=1, color='DarkRed')))
             fig_map.update_layout(margin={"r":0,"t":30,"l":0,"b":0})
             st.plotly_chart(fig_map, use_container_width=True)
         else:
             st.warning("⚠️ Carte vide. Aucun pays reconnu.")
-            st.write("Pays trouvés :", df['Pays'].unique())
 
     with tab2:
         st.subheader("Trajectoire Accord de Paris (SBTi)")
         annees = list(range(2020, 2031))
+        # On estime une référence 2020 basée sur le total actuel
         ref_2020 = total_co2 * 1.15
         sbti_target = [ref_2020 * ((1 - 0.042) ** (annee - 2020)) for annee in annees]
         
@@ -179,7 +158,13 @@ if df is not None:
         st.plotly_chart(fig_traj, use_container_width=True)
 
     with tab3:
-        st.dataframe(df[['Pays', 'Nb_Pax_Total', 'CO2_Total_Simule']].sort_values('CO2_Total_Simule', ascending=False))
+        # Tableau de classement
+        st.subheader("Classement des émissions")
+        st.dataframe(
+            df[['Pays', 'Nb_Pax_Total', 'CO2_Total_Simule']]
+            .sort_values('CO2_Total_Simule', ascending=False)
+            .style.format({'CO2_Total_Simule': '{:,.0f}'})
+        )
 
     # Export PDF
     if st.button("Générer PDF Stratégique"):
