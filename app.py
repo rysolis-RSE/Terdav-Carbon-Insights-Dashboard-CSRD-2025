@@ -1,13 +1,15 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from fpdf import FPDF
 import io
+import numpy as np
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Carbon Monitor", layout="wide", page_icon="🌍")
+st.set_page_config(page_title="Strategic Carbon Monitor", layout="wide", page_icon="🌍")
 
-# --- 0. BASE DE DONNÉES GPS (Pays -> Lat, Lon) ---
+# --- 0. BASE DE DONNÉES GPS ---
 COORDINATES_DB = {
     "France": [46.6, 1.8], "Italie": [41.8, 12.5], "Espagne": [40.4, -3.7], 
     "Portugal": [39.3, -8.2], "Grece": [39.0, 21.8], "Maroc": [31.7, -7.0],
@@ -31,11 +33,11 @@ def generate_pdf(kpi, simulation_text=""):
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", "B", 16)
-        pdf.cell(190, 10, "Rapport Strategique Carbone", ln=True, align="C")
+        pdf.cell(190, 10, "Rapport Strategique Carbone (CSRD)", ln=True, align="C")
         pdf.ln(10)
         pdf.set_font("Arial", "", 12)
         pdf.cell(190, 8, f"Emissions Totales : {kpi['Total_CO2']/1000:,.1f} tCO2e", ln=True)
-        pdf.cell(190, 8, f"Intensite : {kpi['Intensite']:.0f} kgCO2e/pax", ln=True)
+        pdf.cell(190, 8, f"Risque Financier : {kpi['Cout_Carbone']:,.0f} EUR", ln=True)
         if simulation_text:
             pdf.ln(5)
             pdf.multi_cell(190, 8, simulation_text)
@@ -43,8 +45,15 @@ def generate_pdf(kpi, simulation_text=""):
     except:
         return None
 
-# --- 2. INTERFACE ---
-st.sidebar.title("🎛️ Simulateur")
+# --- 2. INTERFACE & PARAMÈTRES FINANCIERS ---
+st.sidebar.title("🎛️ Paramètres Stratégiques")
+
+# NOUVEAU : Simulation Financière
+st.sidebar.subheader("💰 Taxe Carbone Interne")
+prix_tonne = st.sidebar.slider("Prix de la tonne CO2 (€)", 0, 200, 80, 10, help="Pour évaluer le risque financier selon ESRS E1-9")
+
+# Simulation Physique
+st.sidebar.subheader("✈️ Transition Physique")
 reduction_objectif = st.sidebar.slider("Réduction Aérien (%)", 0, 50, 0, 5)
 
 st.sidebar.markdown("---")
@@ -56,15 +65,14 @@ with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
     pd.DataFrame(columns=['Pays', 'Nb_Pax_Total', 'CO2_Aerien', 'CO2_Terrestre']).to_excel(writer, sheet_name='Destinations', index=False)
 st.sidebar.download_button("📥 Template Simplifié", buffer.getvalue(), "Template_Simple.xlsx")
 
-# --- 3. TRAITEMENT INTELLIGENT ---
+# --- 3. LOGIQUE & CALCULS ---
 df = None
-
-# Données de démo au cas où
+# Données démo par défaut
 demo_data = {
-    'Pays': ['France', 'Italie', 'Nepal', 'Maroc', 'Islande'],
-    'Nb_Pax_Total': [5000, 3200, 800, 2100, 900],
-    'CO2_Aerien': [20000, 150000, 1200000, 500000, 450000],
-    'CO2_Terrestre': [150000, 120000, 40000, 80000, 30000]
+    'Pays': ['France', 'Italie', 'Nepal', 'Maroc', 'Islande', 'Japon'],
+    'Nb_Pax_Total': [5000, 3200, 800, 2100, 900, 450],
+    'CO2_Aerien': [20000, 150000, 1200000, 500000, 450000, 900000],
+    'CO2_Terrestre': [150000, 120000, 40000, 80000, 30000, 20000]
 }
 
 if uploaded_file:
@@ -80,84 +88,94 @@ if uploaded_file:
 else:
     df = pd.DataFrame(demo_data)
 
-# --- 4. ENRICHISSEMENT DES DONNÉES (GPS) ---
+# --- 4. TRAITEMENT ---
 if df is not None:
-    # On ajoute Lat/Lon automatiquement
+    # 1. Coordonnées
     def get_coords(pays_name):
         return COORDINATES_DB.get(str(pays_name).strip(), [None, None])
-        
     df['coords'] = df['Pays'].apply(get_coords)
     df[['lat', 'lon']] = pd.DataFrame(df['coords'].tolist(), index=df.index)
     
-    # Calcul Total
-    if 'CO2_Total' not in df.columns:
-        df['CO2_Total'] = df['CO2_Aerien'] + df['CO2_Terrestre']
-
-    # SIMULATION
+    # 2. Simulation Physique
     df['CO2_Aerien_Simule'] = df['CO2_Aerien'] * (1 - reduction_objectif/100)
     df['CO2_Total_Simule'] = df['CO2_Aerien_Simule'] + df['CO2_Terrestre']
 
-    # KPIs
+    # 3. KPIs
     total_co2 = df['CO2_Total_Simule'].sum()
     nb_pax = df['Nb_Pax_Total'].sum()
     intensite = total_co2 / nb_pax if nb_pax > 0 else 0
     
-    # --- DASHBOARD ---
-    st.title(f"🌍 Pilotage Stratégique Carbone")
+    # NOUVEAU : Calcul Financier
+    cout_carbone = (total_co2 / 1000) * prix_tonne
+
+    # --- 5. DASHBOARD ---
+    st.title(f"🌍 Pilotage Stratégique & Financier (CSRD)")
     
-    c1, c2, c3 = st.columns(3)
+    # KPIs avec le financier
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Emissions", f"{total_co2/1000:,.0f} tCO2e")
     c2.metric("Intensité", f"{intensite:.0f} kg/pax")
-    c3.metric("Scénario", f"-{reduction_objectif}% Aérien")
+    c3.metric("Scénario Air", f"-{reduction_objectif}%")
+    # La métrique qui tue :
+    c4.metric("Risque Financier", f"{cout_carbone:,.0f} €", delta=f"Prix: {prix_tonne}€/t", delta_color="off")
     
     st.markdown("---")
     
-    tab1, tab2 = st.tabs(["🗺️ Cartographie", "📊 Analyse"])
+    # ONGLETS : On ajoute la trajectoire
+    tab1, tab2, tab3 = st.tabs(["📉 Trajectoire SBTi", "🗺️ Cartographie", "📊 Analyse Pays"])
     
     with tab1:
-        # --- C'EST ICI QUE J'AI CORRIGÉ L'ERREUR ---
-        # On ne regroupe que sur les colonnes qui existent vraiment
-        agg_dict = {
-            'lat': 'first', 
-            'lon': 'first', 
-            'CO2_Total_Simule': 'sum'
-        }
-        # Si la colonne Continent existe, on l'ajoute, sinon on l'ignore
-        if 'Continent' in df.columns:
-            agg_dict['Continent'] = 'first'
+        st.subheader("Trajectoire de Décarbonation (Accord de Paris 1.5°C)")
+        st.caption("Comparaison entre vos émissions actuelles et la courbe idéale SBTi (-4.2% par an).")
+        
+        # Simulation d'une courbe SBTi basée sur le volume actuel
+        annees = list(range(2020, 2031))
+        # On imagine que 2020 était l'année de référence (un peu plus haute)
+        ref_2020 = total_co2 * 1.15 
+        
+        # Calcul de la courbe SBTi (-4.2% par an depuis 2020)
+        sbti_target = [ref_2020 * ((1 - 0.042) ** (annee - 2020)) for annee in annees]
+        
+        # Donnée actuelle (On place le point actuel en 2025)
+        current_year = 2025
+        
+        fig_traj = go.Figure()
+        # Ligne Cible
+        fig_traj.add_trace(go.Scatter(x=annees, y=sbti_target, mode='lines', name='Objectif SBTi (1.5°C)', line=dict(color='green', dash='dash')))
+        # Point Actuel
+        fig_traj.add_trace(go.Scatter(x=[current_year], y=[total_co2], mode='markers', name='Votre Bilan 2025', marker=dict(color='red', size=15)))
+        
+        # Zone de dépassement ou succès
+        delta_sbti = total_co2 - sbti_target[current_year - 2020]
+        annotation_text = "⚠️ Retard sur l'objectif" if delta_sbti > 0 else "✅ Alignement OK"
+        
+        fig_traj.add_annotation(x=current_year, y=total_co2, text=annotation_text, showarrow=True, arrowhead=1)
+        fig_traj.update_layout(title="Positionnement vs Trajectoire 2030", yaxis_title="Emissions (kg CO2e)")
+        st.plotly_chart(fig_traj, use_container_width=True)
 
-        # On nettoie les lignes sans coordonnées pour ne pas planter
-        df_clean = df.dropna(subset=['lat', 'lon'])
-
-        if not df_clean.empty:
-            df_map = df_clean.groupby('Pays').agg(agg_dict).reset_index()
-            
+    with tab2:
+        # Code Carte (Optimisé)
+        df_map = df.dropna(subset=['lat', 'lon']).groupby('Pays').agg({
+            'lat': 'first', 'lon': 'first', 'CO2_Total_Simule': 'sum'
+        }).reset_index()
+        
+        if not df_map.empty:
             fig_map = px.scatter_geo(
-                df_map, 
-                lat="lat", lon="lon", 
-                size="CO2_Total_Simule", 
-                hover_name="Pays",
-                color="Continent" if 'Continent' in df_map.columns else "Pays", # Couleur dynamique
-                title=f"Carte des émissions (Agrégée)",
-                projection="natural earth",
-                size_max=40
+                df_map, lat="lat", lon="lon", size="CO2_Total_Simule", hover_name="Pays",
+                title=f"Carte des risques (Agrégée)", projection="natural earth", size_max=40
             )
             fig_map.update_layout(margin={"r":0,"t":30,"l":0,"b":0})
             st.plotly_chart(fig_map, use_container_width=True)
         else:
-            st.warning("Impossible d'afficher la carte : aucun pays reconnu dans la base GPS.")
-            st.info("Vérifiez l'orthographe des pays (ex: 'France', 'Italie', 'Maroc').")
+            st.warning("Pas de données géographiques valides.")
 
-    with tab2:
-        top10 = df.sort_values("CO2_Total", ascending=False).head(10)
-        import plotly.graph_objects as go
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=top10['Pays'], y=top10['CO2_Total'], name='Actuel', marker_color='#E63946'))
-        if reduction_objectif > 0:
-            fig.add_trace(go.Bar(x=top10['Pays'], y=top10['CO2_Total_Simule'], name='Simulé', marker_color='#2A9D8F'))
-        st.plotly_chart(fig, use_container_width=True)
+    with tab3:
+        top10 = df.sort_values("CO2_Total_Simule", ascending=False).head(10)
+        fig_bar = px.bar(top10, x='Pays', y='CO2_Total_Simule', title="Top 10 Emetteurs", color='CO2_Total_Simule')
+        st.plotly_chart(fig_bar, use_container_width=True)
 
-    # Export PDF
-    pdf_bytes = generate_pdf({'Total_CO2': total_co2, 'Intensite': intensite}, f"Scenario : -{reduction_objectif}% Avion")
-    if pdf_bytes:
-        st.download_button("📑 Rapport PDF", pdf_bytes, "Rapport.pdf")
+    # Export PDF avec données financières
+    if st.button("Générer Rapport Stratégique (PDF)"):
+        pdf_bytes = generate_pdf({'Total_CO2': total_co2, 'Cout_Carbone': cout_carbone}, f"Scenario: -{reduction_objectif}% Air | Taxe: {prix_tonne} EUR/t")
+        if pdf_bytes:
+            st.download_button("📥 Télécharger PDF", pdf_bytes, "Rapport_SBTi.pdf")
