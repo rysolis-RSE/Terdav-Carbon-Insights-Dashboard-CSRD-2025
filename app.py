@@ -4,12 +4,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 from fpdf import FPDF
 import io
-import numpy as np
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Strategic Carbon Monitor", layout="wide", page_icon="🌍")
 
-# --- 0. BASE DE DONNÉES GPS ---
+# --- 0. BASE DE DONNÉES GPS (Liste Officielle) ---
 COORDINATES_DB = {
     "France": [46.6, 1.8], "Italie": [41.8, 12.5], "Espagne": [40.4, -3.7], 
     "Portugal": [39.3, -8.2], "Grece": [39.0, 21.8], "Maroc": [31.7, -7.0],
@@ -45,29 +44,42 @@ def generate_pdf(kpi, simulation_text=""):
     except:
         return None
 
-# --- 2. INTERFACE & PARAMÈTRES FINANCIERS ---
+# --- 2. INTERFACE ---
 st.sidebar.title("🎛️ Paramètres Stratégiques")
 
-# NOUVEAU : Simulation Financière
-st.sidebar.subheader("💰 Taxe Carbone Interne")
-prix_tonne = st.sidebar.slider("Prix de la tonne CO2 (€)", 0, 200, 80, 10, help="Pour évaluer le risque financier selon ESRS E1-9")
-
-# Simulation Physique
-st.sidebar.subheader("✈️ Transition Physique")
+st.sidebar.subheader("💰 Finance & Climat")
+prix_tonne = st.sidebar.slider("Prix Tonne CO2 (€)", 0, 200, 80, 10)
 reduction_objectif = st.sidebar.slider("Réduction Aérien (%)", 0, 50, 0, 5)
 
 st.sidebar.markdown("---")
-uploaded_file = st.sidebar.file_uploader("Importer Excel", type=["xlsx"])
+st.sidebar.markdown("### 1. Télécharger le Modèle")
 
-# Template simplifié
+# --- GÉNÉRATION DU TEMPLATE PRÉ-REMPLI ---
+# On crée un Excel qui contient DÉJÀ tous les pays valides
+df_template_full = pd.DataFrame({
+    'Pays': list(COORDINATES_DB.keys()), # Liste des pays corrects
+    'Nb_Pax_Total': [0] * len(COORDINATES_DB), # Valeur par défaut
+    'CO2_Aerien': [0] * len(COORDINATES_DB),
+    'CO2_Terrestre': [0] * len(COORDINATES_DB)
+})
+
 buffer = io.BytesIO()
 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-    pd.DataFrame(columns=['Pays', 'Nb_Pax_Total', 'CO2_Aerien', 'CO2_Terrestre']).to_excel(writer, sheet_name='Destinations', index=False)
-st.sidebar.download_button("📥 Template Simplifié", buffer.getvalue(), "Template_Simple.xlsx")
+    df_template_full.to_excel(writer, sheet_name='Destinations', index=False)
+    
+st.sidebar.download_button(
+    label="📥 Télécharger Excel PRÉ-REMPLI",
+    data=buffer.getvalue(),
+    file_name="Template_Terdav_Complet.xlsx",
+    help="Contient déjà la liste des pays reconnus par la carte."
+)
 
-# --- 3. LOGIQUE & CALCULS ---
+st.sidebar.markdown("### 2. Importer")
+uploaded_file = st.sidebar.file_uploader("Importer votre Excel", type=["xlsx"])
+
+# --- 3. CHARGEMENT ---
 df = None
-# Données démo par défaut
+# Données de secours (Demo)
 demo_data = {
     'Pays': ['France', 'Italie', 'Nepal', 'Maroc', 'Islande', 'Japon'],
     'Nb_Pax_Total': [5000, 3200, 800, 2100, 900, 450],
@@ -82,100 +94,95 @@ if uploaded_file:
             df = pd.read_excel(xls, 'Destinations')
         else:
             df = pd.read_excel(xls)
+        
+        # Filtrer les lignes vides (si l'utilisateur a laissé des 0)
+        df = df[df['Nb_Pax_Total'] > 0].copy()
+        
     except Exception as e:
-        st.error(f"Erreur de lecture : {e}")
+        st.error(f"Erreur : {e}")
         st.stop()
 else:
     df = pd.DataFrame(demo_data)
 
-# --- 4. TRAITEMENT ---
+# --- 4. ANALYSE ---
 if df is not None:
-    # 1. Coordonnées
+    # Nettoyage des noms de pays (enlève les espaces invisibles)
+    df['Pays'] = df['Pays'].astype(str).str.strip()
+
+    # Ajout GPS
     def get_coords(pays_name):
-        return COORDINATES_DB.get(str(pays_name).strip(), [None, None])
+        return COORDINATES_DB.get(pays_name, [None, None])
+    
     df['coords'] = df['Pays'].apply(get_coords)
     df[['lat', 'lon']] = pd.DataFrame(df['coords'].tolist(), index=df.index)
-    
-    # 2. Simulation Physique
+
+    # Calculs
+    if 'CO2_Total' not in df.columns:
+        df['CO2_Total'] = df['CO2_Aerien'] + df['CO2_Terrestre']
+
+    # Simulation
     df['CO2_Aerien_Simule'] = df['CO2_Aerien'] * (1 - reduction_objectif/100)
     df['CO2_Total_Simule'] = df['CO2_Aerien_Simule'] + df['CO2_Terrestre']
 
-    # 3. KPIs
     total_co2 = df['CO2_Total_Simule'].sum()
-    nb_pax = df['Nb_Pax_Total'].sum()
-    intensite = total_co2 / nb_pax if nb_pax > 0 else 0
-    
-    # NOUVEAU : Calcul Financier
     cout_carbone = (total_co2 / 1000) * prix_tonne
 
-    # --- 5. DASHBOARD ---
+    # --- DASHBOARD ---
     st.title(f"🌍 Pilotage Stratégique & Financier (CSRD)")
-    
-    # KPIs avec le financier
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Emissions", f"{total_co2/1000:,.0f} tCO2e")
-    c2.metric("Intensité", f"{intensite:.0f} kg/pax")
+    c2.metric("Risque Financier", f"{cout_carbone:,.0f} €", delta=f"{prix_tonne}€/t", delta_color="inverse")
     c3.metric("Scénario Air", f"-{reduction_objectif}%")
-    # La métrique qui tue :
-    c4.metric("Risque Financier", f"{cout_carbone:,.0f} €", delta=f"Prix: {prix_tonne}€/t", delta_color="off")
-    
-    st.markdown("---")
-    
-    # ONGLETS : On ajoute la trajectoire
-    tab1, tab2, tab3 = st.tabs(["📉 Trajectoire SBTi", "🗺️ Cartographie", "📊 Analyse Pays"])
-    
-    with tab1:
-        st.subheader("Trajectoire de Décarbonation (Accord de Paris 1.5°C)")
-        st.caption("Comparaison entre vos émissions actuelles et la courbe idéale SBTi (-4.2% par an).")
-        
-        # Simulation d'une courbe SBTi basée sur le volume actuel
-        annees = list(range(2020, 2031))
-        # On imagine que 2020 était l'année de référence (un peu plus haute)
-        ref_2020 = total_co2 * 1.15 
-        
-        # Calcul de la courbe SBTi (-4.2% par an depuis 2020)
-        sbti_target = [ref_2020 * ((1 - 0.042) ** (annee - 2020)) for annee in annees]
-        
-        # Donnée actuelle (On place le point actuel en 2025)
-        current_year = 2025
-        
-        fig_traj = go.Figure()
-        # Ligne Cible
-        fig_traj.add_trace(go.Scatter(x=annees, y=sbti_target, mode='lines', name='Objectif SBTi (1.5°C)', line=dict(color='green', dash='dash')))
-        # Point Actuel
-        fig_traj.add_trace(go.Scatter(x=[current_year], y=[total_co2], mode='markers', name='Votre Bilan 2025', marker=dict(color='red', size=15)))
-        
-        # Zone de dépassement ou succès
-        delta_sbti = total_co2 - sbti_target[current_year - 2020]
-        annotation_text = "⚠️ Retard sur l'objectif" if delta_sbti > 0 else "✅ Alignement OK"
-        
-        fig_traj.add_annotation(x=current_year, y=total_co2, text=annotation_text, showarrow=True, arrowhead=1)
-        fig_traj.update_layout(title="Positionnement vs Trajectoire 2030", yaxis_title="Emissions (kg CO2e)")
-        st.plotly_chart(fig_traj, use_container_width=True)
+    c4.metric("Pays Analysés", f"{len(df)}")
 
-    with tab2:
-        # Code Carte (Optimisé)
+    st.markdown("---")
+
+    tab1, tab2, tab3 = st.tabs(["🗺️ Cartographie (Rouge)", "📉 Trajectoire SBTi", "📊 Détails"])
+
+    with tab1:
+        st.subheader("Cartographie des Hotspots")
+        
+        # Préparation Carte
         df_map = df.dropna(subset=['lat', 'lon']).groupby('Pays').agg({
             'lat': 'first', 'lon': 'first', 'CO2_Total_Simule': 'sum'
         }).reset_index()
-        
+
         if not df_map.empty:
             fig_map = px.scatter_geo(
-                df_map, lat="lat", lon="lon", size="CO2_Total_Simule", hover_name="Pays",
-                title=f"Carte des risques (Agrégée)", projection="natural earth", size_max=40
+                df_map, 
+                lat="lat", lon="lon", 
+                size="CO2_Total_Simule", 
+                hover_name="Pays",
+                title="Alerte : Zones à Fortes Émissions",
+                projection="natural earth",
+                size_max=50,
+                color_discrete_sequence=['#FF0000'], # FORCE LE ROUGE
+                opacity=0.8
             )
+            fig_map.update_traces(marker=dict(line=dict(width=1, color='DarkRed')))
             fig_map.update_layout(margin={"r":0,"t":30,"l":0,"b":0})
             st.plotly_chart(fig_map, use_container_width=True)
         else:
-            st.warning("Pas de données géographiques valides.")
+            st.warning("⚠️ Carte vide. Aucun pays reconnu.")
+            st.write("Pays trouvés :", df['Pays'].unique())
+
+    with tab2:
+        st.subheader("Trajectoire Accord de Paris (SBTi)")
+        annees = list(range(2020, 2031))
+        ref_2020 = total_co2 * 1.15
+        sbti_target = [ref_2020 * ((1 - 0.042) ** (annee - 2020)) for annee in annees]
+        
+        fig_traj = go.Figure()
+        fig_traj.add_trace(go.Scatter(x=annees, y=sbti_target, mode='lines', name='Objectif 1.5°C', line=dict(color='green', dash='dash')))
+        fig_traj.add_trace(go.Scatter(x=[2025], y=[total_co2], mode='markers', name='Bilan Actuel', marker=dict(color='red', size=15)))
+        st.plotly_chart(fig_traj, use_container_width=True)
 
     with tab3:
-        top10 = df.sort_values("CO2_Total_Simule", ascending=False).head(10)
-        fig_bar = px.bar(top10, x='Pays', y='CO2_Total_Simule', title="Top 10 Emetteurs", color='CO2_Total_Simule')
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.dataframe(df[['Pays', 'Nb_Pax_Total', 'CO2_Total_Simule']].sort_values('CO2_Total_Simule', ascending=False))
 
-    # Export PDF avec données financières
-    if st.button("Générer Rapport Stratégique (PDF)"):
-        pdf_bytes = generate_pdf({'Total_CO2': total_co2, 'Cout_Carbone': cout_carbone}, f"Scenario: -{reduction_objectif}% Air | Taxe: {prix_tonne} EUR/t")
+    # Export PDF
+    if st.button("Générer PDF Stratégique"):
+        pdf_bytes = generate_pdf({'Total_CO2': total_co2, 'Cout_Carbone': cout_carbone})
         if pdf_bytes:
-            st.download_button("📥 Télécharger PDF", pdf_bytes, "Rapport_SBTi.pdf")
+            st.download_button("📥 Rapport PDF", pdf_bytes, "Rapport_CSRD.pdf")
